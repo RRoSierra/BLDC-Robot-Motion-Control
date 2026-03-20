@@ -8,7 +8,7 @@ from PyQt5.QtCore import QTimer
 
 # --- CONFIGURACIÓN DEL PUERTO SERIE ---
 # Cambia 'COM3' por el puerto de tu STM32 (ej. '/dev/ttyACM0' en Linux)
-SERIAL_PORT = 'COM3' 
+SERIAL_PORT = '/dev/ttyACM0' 
 BAUD_RATE = 460800
 
 # Parámetros del gráfico

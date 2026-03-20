@@ -1,0 +1,3 @@
+../Core/Src/encplot_main.c:50:6:HAL_TIM_PeriodElapsedCallback	24	static
+../Core/Src/encplot_main.c:63:6:HAL_I2C_MemRxCpltCallback	32	static
+../Core/Src/encplot_main.c:95:6:HAL_I2C_ErrorCallback	16	static

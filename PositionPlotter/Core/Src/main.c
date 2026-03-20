@@ -26,17 +26,32 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+extern I2C_HandleTypeDef hi2c1;
+extern I2C_HandleTypeDef hi2c2;
+extern I2C_HandleTypeDef hi2c3;
+extern I2C_HandleTypeDef hi2c4;
+extern UART_HandleTypeDef huart3; // Ajusta según el UART que uses hacia el PC
+extern TIM_HandleTypeDef htim1;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define AS5600_ADDR          (0x36 << 1) // Dirección I2C desplazada
+#define AS5600_REG_RAW_ANGLE 0x0C
 
+// --- Registros de calibración del AS5600 ---
+#define AS5600_REG_ZPOS_H    0x01    // Zero Position High byte
+#define AS5600_REG_MPOS_H    0x03    // Maximum Position High byte
+#define AS5600_REG_MANG_H    0x05    // Maximum Angle High byte
+#define AS5600_REG_STATUS    0x0B    // Status: MD(5), ML(4), MH(3)
+#define AS5600_REG_AGC       0x1A    // Automatic Gain Control
+#define AS5600_REG_MAGNITUDE 0x1B    // CORDIC Magnitude High byte
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -54,7 +69,8 @@
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-
+void AS5600_Reset_Calibration(I2C_HandleTypeDef *hi2c);
+void AS5600_Diagnostic(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -102,13 +118,37 @@ int main(void)
   MX_USART3_UART_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+  
+  // Limpiar calibraciones raras de la RAM de los 4 sensores
+  AS5600_Reset_Calibration(&hi2c1);
+  AS5600_Reset_Calibration(&hi2c2);
+  AS5600_Reset_Calibration(&hi2c3);
+  AS5600_Reset_Calibration(&hi2c4);
 
+  // Un pequeño retraso para que el sensor asimile la configuración
+  HAL_Delay(10); 
+
+  // Diagnóstico de los 4 AS5600 por UART
+  AS5600_Diagnostic();
+
+  // Configurar TIM1 para 10ms: 96MHz / 9600 / 100 = 100 Hz
+  htim1.Instance->PSC = 9600 - 1;  // Prescaler -> reloj de 10 kHz
+  htim1.Instance->ARR = 100 - 1;   // Period -> 10 ms
+  htim1.Instance->CNT = 0;
+
+  // Iniciar la base de tiempo
+  HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
-
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  extern volatile uint8_t data_ready;
+  extern uint8_t uart_tx_data_bytes[12];  // DataFrame_t es 12 bytes empaquetados
   while (1)
   {
+    if (data_ready) {
+      data_ready = 0;
+      HAL_UART_Transmit(&huart3, uart_tx_data_bytes, 12, 5);
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -175,6 +215,110 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+ * @brief Fuerza a cero los registros ZPOS, MPOS y MANG del AS5600
+ *        esto garantiza que el sensor actúe en rango completo [0, 4095] 
+ *        sin escalamiento ni offsets indeseados en memoria RAM.
+ */
+void AS5600_Reset_Calibration(I2C_HandleTypeDef *hi2c) {
+    uint8_t zero_buffer[2] = {0x00, 0x00};
+
+    // 1. Limpiar Zero Position (ZPOS en 0x01 y 0x02)
+    HAL_I2C_Mem_Write(hi2c, AS5600_ADDR, AS5600_REG_ZPOS_H, I2C_MEMADD_SIZE_8BIT, zero_buffer, 2, 10);
+    
+    // 2. Limpiar Maximum Position (MPOS en 0x03 y 0x04)
+    HAL_I2C_Mem_Write(hi2c, AS5600_ADDR, AS5600_REG_MPOS_H, I2C_MEMADD_SIZE_8BIT, zero_buffer, 2, 10);
+    
+    // 3. Limpiar Maximum Angle (MANG en 0x05 y 0x06)
+    HAL_I2C_Mem_Write(hi2c, AS5600_ADDR, AS5600_REG_MANG_H, I2C_MEMADD_SIZE_8BIT, zero_buffer, 2, 10);
+}
+
+/**
+ * @brief  Diagnóstico completo de los 4 AS5600 al iniciar.
+ *         Imprime por UART3: conexión, ZPOS, MPOS, MANG, STATUS, AGC, MAGNITUDE.
+ */
+void AS5600_Diagnostic(void) {
+    I2C_HandleTypeDef *buses[4] = {&hi2c1, &hi2c2, &hi2c3, &hi2c4};
+    char msg[128];
+    int len;
+
+    len = snprintf(msg, sizeof(msg),
+        "\r\n========== AS5600 DIAGNOSTIC ==========\r\n");
+    HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+
+    for (int i = 0; i < 4; i++) {
+        len = snprintf(msg, sizeof(msg), "\r\n--- Sensor %d (I2C%d) ---\r\n", i + 1, i + 1);
+        HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+
+        // Verificar conexión con IsDeviceReady
+        HAL_StatusTypeDef status = HAL_I2C_IsDeviceReady(buses[i], AS5600_ADDR, 3, 50);
+        if (status != HAL_OK) {
+            len = snprintf(msg, sizeof(msg), "  Estado: NO CONECTADO\r\n");
+            HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+            continue;
+        }
+        len = snprintf(msg, sizeof(msg), "  Estado: CONECTADO\r\n");
+        HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+
+        uint8_t buf[2];
+
+        // Leer ZPOS (0x01-0x02)
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_ZPOS_H, I2C_MEMADD_SIZE_8BIT, buf, 2, 50);
+        uint16_t zpos = (buf[0] << 8) | buf[1];
+
+        // Leer MPOS (0x03-0x04)
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_MPOS_H, I2C_MEMADD_SIZE_8BIT, buf, 2, 50);
+        uint16_t mpos = (buf[0] << 8) | buf[1];
+
+        // Leer MANG (0x05-0x06) - Escala angular
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_MANG_H, I2C_MEMADD_SIZE_8BIT, buf, 2, 50);
+        uint16_t mang = (buf[0] << 8) | buf[1];
+
+        len = snprintf(msg, sizeof(msg),
+            "  ZPOS: %u  |  MPOS: %u  |  MANG: %u\r\n", zpos, mpos, mang);
+        HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+
+        // Leer STATUS (0x0B)
+        uint8_t status_reg = 0;
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_STATUS, I2C_MEMADD_SIZE_8BIT, &status_reg, 1, 50);
+        uint8_t md = (status_reg >> 5) & 1;  // Magnet Detected
+        uint8_t ml = (status_reg >> 4) & 1;  // Magnet too weak
+        uint8_t mh = (status_reg >> 3) & 1;  // Magnet too strong
+
+        // Leer AGC (0x1A)
+        uint8_t agc = 0;
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_AGC, I2C_MEMADD_SIZE_8BIT, &agc, 1, 50);
+
+        // Leer MAGNITUDE (0x1B-0x1C)
+        HAL_I2C_Mem_Read(buses[i], AS5600_ADDR, AS5600_REG_MAGNITUDE, I2C_MEMADD_SIZE_8BIT, buf, 2, 50);
+        uint16_t magnitude = (buf[0] << 8) | buf[1];
+
+        len = snprintf(msg, sizeof(msg),
+            "  AGC: %u  |  Magnitud: %u\r\n", agc, magnitude);
+        HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+
+        // Evaluación del imán
+        const char *eval;
+        if (!md) {
+            eval = "SIN IMAN DETECTADO";
+        } else if (ml) {
+            eval = "IMAN MUY DEBIL (AGC al maximo)";
+        } else if (mh) {
+            eval = "IMAN MUY FUERTE (AGC al minimo)";
+        } else {
+            eval = "OK - Intensidad aceptable";
+        }
+
+        len = snprintf(msg, sizeof(msg),
+            "  Iman: MD=%u ML=%u MH=%u -> %s\r\n", md, ml, mh, eval);
+        HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+    }
+
+    len = snprintf(msg, sizeof(msg),
+        "\r\n========================================\r\n\r\n");
+    HAL_UART_Transmit(&huart3, (uint8_t *)msg, len, 100);
+}
 
 /* USER CODE END 4 */
 
