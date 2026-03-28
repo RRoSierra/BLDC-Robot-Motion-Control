@@ -1,3 +1,5 @@
-../Core/Src/encplot_main.c:50:6:HAL_TIM_PeriodElapsedCallback	24	static
-../Core/Src/encplot_main.c:63:6:HAL_I2C_MemRxCpltCallback	32	static
-../Core/Src/encplot_main.c:95:6:HAL_I2C_ErrorCallback	16	static
+../Core/Src/encplot_main.c:81:6:HAL_TIM_PeriodElapsedCallback	40	static
+../Core/Src/encplot_main.c:102:6:HAL_I2C_MemRxCpltCallback	16	static
+../Core/Src/encplot_main.c:113:6:HAL_I2C_ErrorCallback	16	static,ignoring_inline_asm
+../Core/Src/encplot_main.c:125:6:HAL_UART_RxCpltCallback	16	static
+../Core/Src/encplot_main.c:137:6:send_diagnostic_frame	120	static

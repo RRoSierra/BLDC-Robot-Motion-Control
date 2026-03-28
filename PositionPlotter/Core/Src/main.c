@@ -71,6 +71,7 @@ static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 void AS5600_Reset_Calibration(I2C_HandleTypeDef *hi2c);
 void AS5600_Diagnostic(void);
+void send_diagnostic_frame(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -138,13 +139,25 @@ int main(void)
 
   // Iniciar la base de tiempo
   HAL_TIM_Base_Start_IT(&htim1);
+
+  // Armar interrupción de recepción UART: escucha comandos del PC, 1 byte a la vez
+  extern volatile uint8_t uart_rx_byte;
+  HAL_UART_Receive_IT(&huart3, (uint8_t *)&uart_rx_byte, 1);
   /* USER CODE END 2 */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   extern volatile uint8_t data_ready;
+  extern volatile uint8_t diag_requested;
   extern uint8_t uart_tx_data_bytes[12];  // DataFrame_t es 12 bytes empaquetados
   while (1)
   {
+    // Comando de diagnóstico (0xDD): pausar muestreo, enviar trama, reanudar
+    if (diag_requested) {
+      diag_requested = 0;
+      HAL_TIM_Base_Stop_IT(&htim1);
+      send_diagnostic_frame();
+      HAL_TIM_Base_Start_IT(&htim1);
+    }
     if (data_ready) {
       data_ready = 0;
       HAL_UART_Transmit(&huart3, uart_tx_data_bytes, 12, 5);

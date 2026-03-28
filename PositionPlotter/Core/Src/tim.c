@@ -81,7 +81,10 @@ void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
     __HAL_RCC_TIM1_CLK_ENABLE();
 
     /* TIM1 interrupt Init */
-    HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 0, 0);
+    // Prioridad 2: por debajó de I2C EV/ER (0) y USART3 (1).
+    // Permite que los ISR de I2C preemptén al TIM1 y sirvan TXIS/RXNE
+    // sin esperar a que el timer ISR retorne (necesario para Mem_Read_IT).
+    HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 2, 0);
     HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
   /* USER CODE BEGIN TIM1_MspInit 1 */
 
